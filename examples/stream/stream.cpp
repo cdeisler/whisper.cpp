@@ -15,8 +15,10 @@
 #include <fstream>
 #include <queue>
 
-#include <httplib.h>
-#include <nlohmann/json.hpp>
+#include "httplib.h"
+#include "json.hpp"
+
+using json = nlohmann::json;
 
 //  500 -> 00:05.000
 // 6000 -> 01:00.000
@@ -122,58 +124,119 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "\n");
 }
 
-void sendTranscriptionsOverHTTP(const std::queue<std::string>& transcriptionQueue) {
- // Create a copy of the transcriptionQueue
-    std::queue<std::string> queueCopy = transcriptionQueue;
-
-    // Concatenate transcriptions into a single string
-    std::string concatenatedTranscriptions;
-    while (!queueCopy.empty()) {
-        concatenatedTranscriptions += queueCopy.front();
-        queueCopy.pop();
-    }
-
-    // Create a JSON object
-    nlohmann::json jsonData;
-    jsonData["transcriptions"] = concatenatedTranscriptions;
-
-    // Convert JSON data to string
-    std::string jsonString = jsonData.dump();
-
-    // Set up the HTTP client
-    httplib::Client client("127.0.0.1", 8080); // Adjust the host and port as needed
-
-    // Set the request path
-    std::string path = "/completion"; // Adjust the path as needed
-
-    // Set the request headers
-    httplib::Headers headers;
-    headers.emplace("Content-Type", "application/json");
-
-    // Send the HTTP POST request
-    auto response = client.Post(path.c_str(), headers, jsonString.c_str(), "application/json");
-
-    // Check the response status
-    if (response && response->status == 200) {
-        // Process the response body
-        std::string responseString = response->body;
-
-        // Parse the response JSON
-        nlohmann::json responseJson = nlohmann::json::parse(responseString);
-
-        // Handle the response data as needed
-        // ...
-
-        std::cout << "Received response: " << responseJson.dump() << std::endl;
-    } else {
-        // Failed to receive a valid response
-        if (response) {
-            std::cout << "Request failed. Status code: " << response->status << std::endl;
-        } else {
-            std::cout << "Request failed. No response received." << std::endl;
+std::string cleanTranscription(const std::string &transcription) {
+    std::string cleanedText = "";
+    bool ignore = false;
+    for (char ch : transcription) {
+        if (ch == '(' || ch == '[') {
+            ignore = true;
+        } else if (ch == ')' || ch == ']') {
+            ignore = false;
+        } else if (!ignore) {
+            cleanedText += ch;
         }
     }
+    return cleanedText;
 }
+
+std::string cleanExcessiveNewlines(const std::string& input) {
+    // Remove excessive newlines
+    std::regex newlinesRegex("\\\\n+");
+    std::string cleaned = std::regex_replace(input, newlinesRegex, "");
+
+    // Trim whitespaces from the start
+    auto start = std::find_if(cleaned.begin(), cleaned.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    });
+
+    // Trim whitespaces from the end
+    auto end = std::find_if(cleaned.rbegin(), cleaned.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base();
+
+    // Return the trimmed string
+    return (end <= start ? std::string() : std::string(start, end));
+}
+
+void sendTranscriptionsOverHTTP(const std::queue<std::string>& transcriptionQueue) {
+  try {
+        // Create a copy of the transcriptionQueue
+        std::queue<std::string> queueCopy = transcriptionQueue;
+
+        // Concatenate transcriptions into a single string
+        std::string concatenatedTranscriptions;
+        while (!queueCopy.empty()) {
+            concatenatedTranscriptions += queueCopy.front();
+            queueCopy.pop();
+        }
+
+        // Clean excessive newlines and create a JSON object
+        std::string prompt = cleanExcessiveNewlines(concatenatedTranscriptions);
+
+        // Check if the prompt is not an empty string
+        if (!prompt.empty()) {
+            json jsonData;
+            jsonData["prompt"] = "### Instruction: " + prompt + "\n### Response:";
+            jsonData["threads"] = 1;
+            jsonData["n_predict"] = 512;
+            jsonData["batch_size"] = 1000;
+            jsonData["temperature"] = 0.1;
+
+            // Convert the JSON object to a
+            // Convert JSON data to string
+            std::string jsonString = jsonData.dump(4);
+
+            // Set up the HTTP client
+            httplib::Client client("127.0.0.1", 8080); // Adjust the host and port as needed
+            // Set the connection timeout to 5 minutes (300 seconds)
+            client.set_connection_timeout(300);
+            // Optionally, set the read timeout to 5 minutes as well
+            client.set_read_timeout(300);
+            // Set the request path
+            std::string path = "/completion"; // Adjust the path as needed
+
+            // Set the request headers
+            httplib::Headers headers;
+            headers.emplace("Content-Type", "application/json");
+
+            printf("%s\n", jsonString.c_str());
+            // Send the HTTP POST request
+            auto response = client.Post(path.c_str(), headers, jsonString.c_str(), "application/json");
+
+            // Check the response status
+            if (response && response->status == 200) {
+                // Process the response body
+                std::string responseString = response->body;
+
+                // Parse the response JSON
+                json responseJson = json::parse(responseString);
+
+                std::string content = responseJson["content"];
+                int tokens_predicted = responseJson["tokens_predicted"];
+
+                // Handle the response data as needed
+                printf("Received response: %s\nTokens predicted: %i", content.c_str(), tokens_predicted);
+
+            } else {
+                // Failed to receive a valid response
+                if (response) {
+                    std::cout << "Request failed. Status code: " << response->status << std::endl;
+                } else {
+                    std::cout << "Request failed. No response received." << std::endl;
+                }
+            }
+        } else {
+            printf("Prompt is empty, not sending.\n");
+        }
+    } catch (const std::exception &e) {
+        // Catch and print exception
+        std::cerr << "An exception occurred: " << e.what() << std::endl;
+    } catch (...) {
+        // Catch any other exceptions not derived from std::exception
+        std::cerr << "An unknown exception occurred" << std::endl;
+    }
+}
+
 
 int main(int argc, char** argv) {
 
@@ -185,7 +248,7 @@ int main(int argc, char** argv) {
     }
 
     const float confidence_threshold = 1.0f;
-    const int delay_ms = std::max(1000, 1000);
+    const int delay_ms = 250;
 
     params.keep_ms = std::min(params.keep_ms, params.step_ms);
     params.length_ms = std::max(params.length_ms, params.step_ms);
@@ -202,6 +265,8 @@ int main(int argc, char** argv) {
     params.no_timestamps = !use_vad;
     params.no_context |= use_vad;
     params.max_tokens = 0;
+
+    printf("use_Vad: %d\n", use_vad);
 
     // init audio
 
@@ -272,7 +337,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("[Start speaking..]");
+    printf("[Start speaking..]\n");
     fflush(stdout);
 
     auto t_last = std::chrono::high_resolution_clock::now();
@@ -337,7 +402,6 @@ int main(int argc, char** argv) {
 
             if (t_diff < 2000) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
                 continue;
             }
 
@@ -348,7 +412,6 @@ int main(int argc, char** argv) {
             }
             else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
                 continue;
             }
 
@@ -423,23 +486,19 @@ int main(int argc, char** argv) {
                     }
 
                     if (params.no_timestamps) {
-
-                        transcription += text;
-
+                        transcription += cleanTranscription(std::string(text));
                         printf("%s", text);
                         fflush(stdout);
-
                         if (params.fname_out.length() > 0) {
                             fout << text;
                         }
-
                     }
                     else {
                         const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                         const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
 
                         printf("[%s --> %s]  %s\n", to_timestamp(t0).c_str(), to_timestamp(t1).c_str(), text);
-                        transcription += std::string(text) + "\n";
+                        transcription += cleanTranscription(std::string(text)) + "\n"; 
 
                         if (params.fname_out.length() > 0) {
                             fout << "[" << to_timestamp(t0) << " --> " << to_timestamp(t1) << "]  " << text << std::endl;
@@ -447,8 +506,10 @@ int main(int argc, char** argv) {
                     }
                 }
 
-                // Add the transcription to the queue
-                transcriptionQueue.push(transcription);
+                // Check if transcription is a valid sentence before adding to the queue
+                if (!transcription.empty() && transcription.length() >= 5 && !std::all_of(transcription.begin(), transcription.end(), isspace)) {
+                    transcriptionQueue.push(transcription);
+                }
 
                 if (params.fname_out.length() > 0) {
                     fout << std::endl;
@@ -485,7 +546,6 @@ int main(int argc, char** argv) {
                         if (!params.no_context || carry_over_prompt) {
                             prompt_tokens.clear();
                             carry_over_prompt = false;
-
                             const int n_segments = whisper_full_n_segments(ctx);
                             for (int i = 0; i < n_segments; ++i) {
                                 const int token_count = whisper_full_n_tokens(ctx, i);
@@ -501,9 +561,13 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            fflush(stdout);
 
+            fflush(stdout);
             sendTranscriptionsOverHTTP(transcriptionQueue);
+            // Clearing the queue after sending
+            std::queue<std::string> emptyQueue;
+            transcriptionQueue.swap(emptyQueue);
+
         }
     }
 
