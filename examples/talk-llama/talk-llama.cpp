@@ -243,6 +243,7 @@ int main(int argc, char ** argv) {
     lparams.n_ctx      = 2048;
     lparams.seed       = 1;
     lparams.f16_kv     = true;
+    lparams.n_gpu_layers = 50;
 
     struct llama_context * ctx_llama = llama_init_from_file(params.model_llama.c_str(), lparams);
 
