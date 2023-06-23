@@ -5,6 +5,10 @@
 #include "common-sdl.h"
 #include "whisper.h"
 #include "llama.h"
+#include "rnnoise.h"
+
+#include <sndfile.h>
+#include <iostream>
 
 #include <cassert>
 #include <cstdio>
@@ -14,6 +18,8 @@
 #include <thread>
 #include <vector>
 #include <regex>
+
+#define FRAME_SIZE 480
 
 std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::string & text, bool add_bos) {
     // initialize to prompt numer of chars, since n_tokens <= n_prompt_chars
@@ -216,7 +222,41 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
+bool saveAsWav(const std::vector<float>& pcmf32_cur, const std::string& filename, int sampleRate = 16000, int channels = 1) {
+    // Convert samples to 16-bit PCM
+    std::vector<short> pcm16(pcmf32_cur.size());
+    for (size_t i = 0; i < pcmf32_cur.size(); ++i) {
+        pcm16[i] = static_cast<short>(pcmf32_cur[i] * 32767.0f);
+    }
+
+    // Set WAV file settings
+    SF_INFO sfinfo;
+    sfinfo.samplerate = sampleRate; // sample rate in Hz
+    sfinfo.channels = channels;      // number of channels
+    sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16; // WAV format, 16-bit PCM
+
+    // Open WAV file for writing
+    SNDFILE *outfile = sf_open(filename.c_str(), SFM_WRITE, &sfinfo);
+    if (!outfile) {
+        std::cerr << "Error opening output file" << std::endl;
+        return false;
+    }
+
+    // Write samples to WAV file
+    sf_writef_short(outfile, pcm16.data(), pcm16.size());
+
+    // Close WAV file
+    sf_close(outfile);
+
+    std::cout << "WAV file written successfully" << std::endl;
+    return true;
+}
+
 int main(int argc, char ** argv) {
+
+    // Create RNNoise denoiser state
+    DenoiseState *denoiserState = rnnoise_create(NULL);
+
     whisper_params params;
 
     if (whisper_params_parse(argc, argv, params) == false) {
@@ -291,6 +331,11 @@ int main(int argc, char ** argv) {
 
     std::vector<float> pcmf32_cur;
     std::vector<float> pcmf32_prompt;
+
+    std::vector<float> pcm32_input(FRAME_SIZE);
+    std::vector<float> pcm32_output(FRAME_SIZE);
+    std::vector<float> denoisedBuffer(FRAME_SIZE);
+
 
     const std::string prompt_whisper = ::replace(k_prompt_whisper, "{1}", bot_name);
 
@@ -448,26 +493,48 @@ int main(int argc, char ** argv) {
 
                 audio.get(params.voice_ms, pcmf32_cur);
 
+
+                 saveAsWav(pcmf32_cur, "output-before.wav");
+
+                // Convert float samples to 16-bit PCM, then to float representation between -1 and 1
+                for (size_t i = 0; i < FRAME_SIZE; i++) {
+                    short pcm16 = static_cast<short>(pcmf32_cur[i] * 32767.0f);
+                    pcm32_input[i] = static_cast<float>(pcm16) / 32767.0f;
+                }
+
+                // Process with RNNoise (assuming denoiserState is already created)
+                rnnoise_process_frame(denoiserState, pcm32_output.data(), pcm32_input.data());
+
+                saveAsWav(pcm32_output, "output-denoised.wav");
+
+                //std::vector<float> denoisedVector(denoisedBuffer, denoisedBuffer + 480);
+
+                // Print the size of denoisedVector
+                // for (float value : denoisedVector) {
+                //     printf("%f ", value);
+                // }
+                // printf("\n");
+
                 std::string text_heard;
 
                 if (!force_speak) {
                     text_heard = ::trim(::transcribe(ctx_wsp, params, pcmf32_cur, prompt_whisper, prob0, t_ms));
                 }
 
-                // remove text between brackets using regex
-                {
-                    std::regex re("\\[.*?\\]");
-                    text_heard = std::regex_replace(text_heard, re, "");
-                }
+                // // remove text between brackets using regex
+                // {
+                //     std::regex re("\\[.*?\\]");
+                //     text_heard = std::regex_replace(text_heard, re, "");
+                // }
 
-                // remove text between brackets using regex
-                {
-                    std::regex re("\\(.*?\\)");
-                    text_heard = std::regex_replace(text_heard, re, "");
-                }
+                // // remove text between brackets using regex
+                // {
+                //     std::regex re("\\(.*?\\)");
+                //     text_heard = std::regex_replace(text_heard, re, "");
+                // }
 
-                // remove all characters, except for letters, numbers, punctuation and ':', '\'', '-', ' '
-                text_heard = std::regex_replace(text_heard, std::regex("[^a-zA-Z0-9\\.,\\?!\\s\\:\\'\\-]"), "");
+                // // remove all characters, except for letters, numbers, punctuation and ':', '\'', '-', ' '
+                // text_heard = std::regex_replace(text_heard, std::regex("[^a-zA-Z0-9\\.,\\?!\\s\\:\\'\\-]"), "");
 
                 // take first line
                 text_heard = text_heard.substr(0, text_heard.find_first_of('\n'));
@@ -659,6 +726,7 @@ int main(int argc, char ** argv) {
         }
     }
 
+    rnnoise_destroy(denoiserState);
     audio.pause();
 
     whisper_print_timings(ctx_wsp);
