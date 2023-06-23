@@ -17,6 +17,9 @@
 
 #include "httplib.h"
 #include "json.hpp"
+#include "rnnoise.h"
+
+#define FRAME_SIZE 480
 
 using json = nlohmann::json;
 
@@ -240,6 +243,12 @@ void sendTranscriptionsOverHTTP(const std::queue<std::string>& transcriptionQueu
 
 int main(int argc, char** argv) {
 
+    // Create RNNoise denoiser state
+    DenoiseState *denoiserState = rnnoise_create(NULL);
+
+    // Buffer for denoised audio
+    float denoisedBuffer[FRAME_SIZE];
+    
     std::queue<std::string> transcriptionQueue;
     whisper_params params;
 
@@ -275,6 +284,8 @@ int main(int argc, char** argv) {
         fprintf(stderr, "%s: audio.init() failed!\n", __func__);
         return 1;
     }
+
+    whisper_print_usage(argc, argv, params);
 
     audio.resume();
 
@@ -360,9 +371,9 @@ int main(int argc, char** argv) {
         }
 
         // process new audio
-
         if (!use_vad) {
             while (true) {
+
                 audio.get(params.step_ms, pcmf32_new);
 
                 if ((int)pcmf32_new.size() > 2 * n_samples_step) {
@@ -414,6 +425,13 @@ int main(int argc, char** argv) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
+
+            // Assuming that pcmf32 is a buffer of float with size FRAME_SIZE.
+            // If pcmf32 is in a different format, you may need to convert it.
+            
+            // Apply the denoiser to the frame
+            rnnoise_process_frame(denoiserState, denoisedBuffer, pcmf32.data());
+        
 
             t_last = t_now;
         }
@@ -570,6 +588,9 @@ int main(int argc, char** argv) {
 
         }
     }
+
+    // Clean up
+    rnnoise_destroy(denoiserState);
 
     audio.pause();
 
