@@ -21,7 +21,66 @@
 #include <vector>
 #include <regex>
 
+namespace bp = boost::process;
+
 #define FRAME_SIZE 480
+
+void start_python_server() {
+    // Set the environment variable
+    bp::environment env = boost::this_process::environment();
+    env["CUDA_VISIBLE_DEVICES"] = "0";
+
+    // Get the user's home directory
+    const char* homeDir = std::getenv("HOME");
+    if (!homeDir) {
+        std::cerr << "Failed to get HOME environment variable." << std::endl;
+        return;
+    }
+
+    // Construct the full path to server.py
+    std::string serverPath = std::string(homeDir) + "/TTS/TTS/server/server.py";
+
+    // Define the command and arguments
+    std::vector<std::string> args = {
+        serverPath,
+        "--model_name", "tts_models/en/jenny/jenny",
+        "--use_cuda", "True"
+    };
+
+    // Streams to capture standard output and standard error
+    bp::ipstream outStream, errStream;
+
+    // Debugging: Check if python3 is available in PATH
+    bp::system("which python3");
+
+    // Debugging: Check if the script file exists
+    std::ifstream scriptFile(serverPath);
+    if (scriptFile.good()) {
+        std::cout << "Script file exists: " << serverPath << std::endl;
+    } else {
+        std::cerr << "Script file not found: " << serverPath << std::endl;
+        return;
+    }
+    scriptFile.close();
+
+    // Execute the command
+    bp::child childProcess("/usr/bin/python3", args, env, bp::std_out > outStream, bp::std_err > errStream);
+
+
+    // Read from standard output and print
+    std::string line;
+    while (childProcess.running() && std::getline(outStream, line) && !line.empty()) {
+        std::cout << "Output: " << line << std::endl;
+    }
+
+    // Read from standard error and print
+    while (childProcess.running() && std::getline(errStream, line) && !line.empty()) {
+        std::cerr << "Error: " << line << std::endl;
+    }
+
+    // Wait for the child process to finish
+    childProcess.wait();
+}
 
 std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::string & text, bool add_bos) {
     // initialize to prompt numer of chars, since n_tokens <= n_prompt_chars
@@ -255,6 +314,8 @@ bool saveAsWav(const std::vector<float>& pcmf32_cur, const std::string& filename
 }
 
 int main(int argc, char ** argv) {
+
+    std::thread serverThread(start_python_server);
 
     // Create RNNoise denoiser state
     DenoiseState *denoiserState = rnnoise_create(NULL);
