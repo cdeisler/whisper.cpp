@@ -6,7 +6,8 @@
 #include "whisper.h"
 #include "llama.h"
 #include "rnnoise.h"
-
+#include <boost/asio.hpp>
+#include <boost/beast.hpp>
 #include <boost/process.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -30,13 +31,36 @@
 namespace bp = boost::process;
 namespace http = boost::beast::http;
 namespace net = boost::asio;
+using tcp = net::ip::tcp;
 
 #define FRAME_SIZE 480
 
-void playAudio(std::vector<short> &samples, int sampleRate) {
+bp::child childProcess; 
+
+std::string url_encode(const std::string &value) {
+    static auto hex_chars = "0123456789ABCDEF";
+
+    std::string encoded;
+    for (auto c : value) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded += c;
+        } else {
+            encoded += '%';
+            encoded += hex_chars[c >> 4];
+            encoded += hex_chars[c & 15];
+        }
+    }
+    return encoded;
+}
+
+void playAudio(const std::string &filePath) {
+    SndfileHandle sndfile(filePath);
+    std::vector<short> samples(sndfile.frames() * sndfile.channels());
+    sndfile.read(samples.data(), sndfile.frames() * sndfile.channels());
+
     Pa_Initialize();
     PaStream *stream;
-    Pa_OpenDefaultStream(&stream, 0, 1, paInt16, sampleRate, 256, nullptr, nullptr);
+    Pa_OpenDefaultStream(&stream, 0, 1, paInt16, sndfile.samplerate(), 256, nullptr, nullptr);
     Pa_StartStream(stream);
     Pa_WriteStream(stream, samples.data(), samples.size());
     Pa_StopStream(stream);
@@ -44,38 +68,67 @@ void playAudio(std::vector<short> &samples, int sampleRate) {
     Pa_Terminate();
 }
 
-void sendTextAndGetAudio(const std::string &text) {
+void sendTextAndGetAudio(const std::string& text) {
     try {
-        // Setup networking
+        // Create IO service and resolver
         net::io_context ioc;
-        net::ip::tcp::resolver resolver(ioc);
-        net::ip::tcp::socket socket(ioc);
+        tcp::resolver resolver(ioc);
 
-        // Connect
-        auto const results = resolver.resolve("[::1]", "5002");
+        // Resolve the endpoint (IP and port)
+        auto const results = resolver.resolve("127.0.0.1", "5002");
+
+        // Create a socket and connect
+        tcp::socket socket(ioc);
         net::connect(socket, results.begin(), results.end());
 
-        // Send HTTP GET request
-        http::request<http::string_body> req(http::verb::get, "/api/tts?text=" + text, 11);
+        // URL-encode the text parameter
+        std::string encoded_text;
+        for (char c : text) {
+            if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                encoded_text += c;
+            } else {
+                char buf[4];
+                std::snprintf(buf, sizeof(buf), "%%%02X", (uint8_t)c);
+                encoded_text += buf;
+            }
+        }
+
+        // Create the HTTP GET request
+        http::request<http::string_body> req(http::verb::get, "/api/tts?text=" + encoded_text, 11);
+        req.set(http::field::host, "127.0.0.1");
+        req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
+
+        // Send the HTTP request
         http::write(socket, req);
 
-        // Receive response
+        // Declare a buffer to hold the response
         boost::beast::flat_buffer buffer;
-        http::response<http::vector_body<char>> res;
+
+        // Declare a variable to hold the response
+        http::response<http::dynamic_body> res;
+
+        // Receive the HTTP response
         http::read(socket, buffer, res);
 
-        // Process WAV data
-        SndfileHandle sndfile = SndfileHandle(SF_VIRTUAL_IO, &sfVirtualIo, &res.body(), SF_FORMAT_WAV);
-        std::vector<short> samples(sndfile.frames() * sndfile.channels());
-        sndfile.read(samples.data(), sndfile.frames() * sndfile.channels());
+        // Write the message to stdout (or handle it in any other way)
+        //std::cout << boost::beast::make_printable(res.body().data()) << std::endl;
+        // Save the audio data to a file
+        std::ofstream outFile("output1.wav", std::ios::binary);
+        std::vector<char> bodyData(boost::asio::buffer_size(res.body().data()));
+        boost::asio::buffer_copy(boost::asio::buffer(bodyData), res.body().data());
+        outFile.write(bodyData.data(), bodyData.size());
+        outFile.close();
+        // Close the socket
+        socket.shutdown(tcp::socket::shutdown_both);
 
-        // Play the audio
-        playAudio(samples, sndfile.samplerate());
+        // Play the audio file
+        playAudio("output1.wav");
 
-    } catch (std::exception const &e) {
+    } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
     }
 }
+
 
 void start_python_server() {
     // Set the environment variable
@@ -116,22 +169,32 @@ void start_python_server() {
     scriptFile.close();
 
     // Execute the command
-    bp::child childProcess("/usr/bin/python3", args, env, bp::std_out > outStream, bp::std_err > errStream);
+    childProcess = bp::child("/usr/bin/python3", args, env, bp::std_out > outStream, bp::std_err > errStream);
 
 
     // Read from standard output and print
     std::string line;
-    while (childProcess.running() && std::getline(outStream, line) && !line.empty()) {
-        std::cout << "Output: " << line << std::endl;
-    }
+    // while (childProcess.running() && std::getline(outStream, line) && !line.empty()) {
+    //     std::cout << "Output: " << line << std::endl;
+    // }
 
-    // Read from standard error and print
-    while (childProcess.running() && std::getline(errStream, line) && !line.empty()) {
-        std::cerr << "Error: " << line << std::endl;
-    }
+    // // Read from standard error and print
+    // while (childProcess.running() && std::getline(errStream, line) && !line.empty()) {
+    //     std::cerr << "Error: " << line << std::endl;
+    // }
 
     // Wait for the child process to finish
     childProcess.wait();
+}
+
+void shutdown_python_server() {
+    if (childProcess.running()) {
+        childProcess.terminate();
+        childProcess.wait(); // Optionally wait for the process to terminate
+        std::cout << "Python server terminated." << std::endl;
+    } else {
+        std::cout << "Python server is not running." << std::endl;
+    }
 }
 
 bool saveAsWav(const std::vector<float>& pcmf32_cur, const std::string& filename, int sampleRate = 16000, int channels = 1) {
@@ -370,6 +433,8 @@ The transcript only includes text, it does not include markup like HTML and Mark
 int main(int argc, char ** argv) {
 
     std::thread serverThread(start_python_server);
+    serverThread.detach();
+    std::atexit(shutdown_python_server);
 
     // Create RNNoise denoiser state
     DenoiseState *denoiserState = rnnoise_create(NULL);
