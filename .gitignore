@@ -44,4 +44,4 @@ models/*.mlpackage
 bindings/java/.gradle/
 bindings/java/.idea/
 .idea/
-output1.wav
+*.wav
