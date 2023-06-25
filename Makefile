@@ -1,5 +1,7 @@
 default: main bench quantize
 
+BOOST_ROOT := /usr/local/boost_1_82_0
+
 ifndef UNAME_S
 UNAME_S := $(shell uname -s)
 endif
@@ -160,9 +162,9 @@ ifdef WHISPER_OPENBLAS
 endif
 
 ifdef WHISPER_CUBLAS
-	CFLAGS      += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include
-	CXXFLAGS    += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include -I/home/chuckd/json/include -I/home/chuckd/cpp-httplib
-	LDFLAGS     += -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -lrnnoise -lsndfile -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L/usr/local/lib -L$(CUDA_PATH)/targets/x86_64-linux/lib
+	CFLAGS      += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include 
+	CXXFLAGS    += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include -I$(BOOST_ROOT)
+	LDFLAGS     += -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -lrnnoise -lsndfile -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L/usr/local/lib -L$(BOOST_ROOT)/libs -L$(CUDA_PATH)/targets/x86_64-linux/lib
 	WHISPER_OBJ += ggml-cuda.o
 	NVCC        = nvcc
 	NVCCFLAGS   = --forward-unknown-to-host-compiler -arch=all

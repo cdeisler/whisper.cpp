@@ -7,6 +7,8 @@
 #include "llama.h"
 #include "rnnoise.h"
 
+#include <boost/process.hpp>
+
 #include <sndfile.h>
 #include <iostream>
 
@@ -494,18 +496,18 @@ int main(int argc, char ** argv) {
                 audio.get(params.voice_ms, pcmf32_cur);
 
 
-                 saveAsWav(pcmf32_cur, "output-before.wav");
+                //saveAsWav(pcmf32_cur, "output-before.wav");
 
                 // Convert float samples to 16-bit PCM, then to float representation between -1 and 1
-                for (size_t i = 0; i < FRAME_SIZE; i++) {
-                    short pcm16 = static_cast<short>(pcmf32_cur[i] * 32767.0f);
-                    pcm32_input[i] = static_cast<float>(pcm16) / 32767.0f;
-                }
+                // for (size_t i = 0; i < FRAME_SIZE; i++) {
+                //     short pcm16 = static_cast<short>(pcmf32_cur[i] * 32767.0f);
+                //     pcm32_input[i] = static_cast<float>(pcm16) / 32767.0f;
+                // }
 
                 // Process with RNNoise (assuming denoiserState is already created)
                 rnnoise_process_frame(denoiserState, pcm32_output.data(), pcm32_input.data());
 
-                saveAsWav(pcm32_output, "output-denoised.wav");
+                //saveAsWav(pcm32_output, "output-denoised.wav");
 
                 //std::vector<float> denoisedVector(denoisedBuffer, denoisedBuffer + 480);
 
