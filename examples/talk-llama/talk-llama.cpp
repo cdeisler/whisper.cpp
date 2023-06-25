@@ -8,7 +8,13 @@
 #include "rnnoise.h"
 
 #include <boost/process.hpp>
-
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/asio/connect.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <sndfile.hh>
+#include <portaudio.h>
+#
 #include <sndfile.h>
 #include <iostream>
 
@@ -22,8 +28,54 @@
 #include <regex>
 
 namespace bp = boost::process;
+namespace http = boost::beast::http;
+namespace net = boost::asio;
 
 #define FRAME_SIZE 480
+
+void playAudio(std::vector<short> &samples, int sampleRate) {
+    Pa_Initialize();
+    PaStream *stream;
+    Pa_OpenDefaultStream(&stream, 0, 1, paInt16, sampleRate, 256, nullptr, nullptr);
+    Pa_StartStream(stream);
+    Pa_WriteStream(stream, samples.data(), samples.size());
+    Pa_StopStream(stream);
+    Pa_CloseStream(stream);
+    Pa_Terminate();
+}
+
+void sendTextAndGetAudio(const std::string &text) {
+    try {
+        // Setup networking
+        net::io_context ioc;
+        net::ip::tcp::resolver resolver(ioc);
+        net::ip::tcp::socket socket(ioc);
+
+        // Connect
+        auto const results = resolver.resolve("[::1]", "5002");
+        net::connect(socket, results.begin(), results.end());
+
+        // Send HTTP GET request
+        http::request<http::string_body> req(http::verb::get, "/api/tts?text=" + text, 11);
+        http::write(socket, req);
+
+        // Receive response
+        boost::beast::flat_buffer buffer;
+        http::response<http::vector_body<char>> res;
+        http::read(socket, buffer, res);
+
+        // Process WAV data
+        SndfileHandle sndfile = SndfileHandle(SF_VIRTUAL_IO, &sfVirtualIo, &res.body(), SF_FORMAT_WAV);
+        std::vector<short> samples(sndfile.frames() * sndfile.channels());
+        sndfile.read(samples.data(), sndfile.frames() * sndfile.channels());
+
+        // Play the audio
+        playAudio(samples, sndfile.samplerate());
+
+    } catch (std::exception const &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
+}
 
 void start_python_server() {
     // Set the environment variable
@@ -81,6 +133,37 @@ void start_python_server() {
     // Wait for the child process to finish
     childProcess.wait();
 }
+
+bool saveAsWav(const std::vector<float>& pcmf32_cur, const std::string& filename, int sampleRate = 16000, int channels = 1) {
+    // Convert samples to 16-bit PCM
+    std::vector<short> pcm16(pcmf32_cur.size());
+    for (size_t i = 0; i < pcmf32_cur.size(); ++i) {
+        pcm16[i] = static_cast<short>(pcmf32_cur[i] * 32767.0f);
+    }
+
+    // Set WAV file settings
+    SF_INFO sfinfo;
+    sfinfo.samplerate = sampleRate; // sample rate in Hz
+    sfinfo.channels = channels;      // number of channels
+    sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16; // WAV format, 16-bit PCM
+
+    // Open WAV file for writing
+    SNDFILE *outfile = sf_open(filename.c_str(), SFM_WRITE, &sfinfo);
+    if (!outfile) {
+        std::cerr << "Error opening output file" << std::endl;
+        return false;
+    }
+
+    // Write samples to WAV file
+    sf_writef_short(outfile, pcm16.data(), pcm16.size());
+
+    // Close WAV file
+    sf_close(outfile);
+
+    std::cout << "WAV file written successfully" << std::endl;
+    return true;
+}
+
 
 std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::string & text, bool add_bos) {
     // initialize to prompt numer of chars, since n_tokens <= n_prompt_chars
@@ -283,35 +366,6 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
-bool saveAsWav(const std::vector<float>& pcmf32_cur, const std::string& filename, int sampleRate = 16000, int channels = 1) {
-    // Convert samples to 16-bit PCM
-    std::vector<short> pcm16(pcmf32_cur.size());
-    for (size_t i = 0; i < pcmf32_cur.size(); ++i) {
-        pcm16[i] = static_cast<short>(pcmf32_cur[i] * 32767.0f);
-    }
-
-    // Set WAV file settings
-    SF_INFO sfinfo;
-    sfinfo.samplerate = sampleRate; // sample rate in Hz
-    sfinfo.channels = channels;      // number of channels
-    sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16; // WAV format, 16-bit PCM
-
-    // Open WAV file for writing
-    SNDFILE *outfile = sf_open(filename.c_str(), SFM_WRITE, &sfinfo);
-    if (!outfile) {
-        std::cerr << "Error opening output file" << std::endl;
-        return false;
-    }
-
-    // Write samples to WAV file
-    sf_writef_short(outfile, pcm16.data(), pcm16.size());
-
-    // Close WAV file
-    sf_close(outfile);
-
-    std::cout << "WAV file written successfully" << std::endl;
-    return true;
-}
 
 int main(int argc, char ** argv) {
 
@@ -370,7 +424,6 @@ int main(int argc, char ** argv) {
 
         fprintf(stderr, "\n");
     }
-
 
     // init audio
 
@@ -566,7 +619,7 @@ int main(int argc, char ** argv) {
                 // }
 
                 // Process with RNNoise (assuming denoiserState is already created)
-                rnnoise_process_frame(denoiserState, pcm32_output.data(), pcm32_input.data());
+                //rnnoise_process_frame(denoiserState, pcm32_output.data(), pcm32_input.data());
 
                 //saveAsWav(pcm32_output, "output-denoised.wav");
 
@@ -584,20 +637,20 @@ int main(int argc, char ** argv) {
                     text_heard = ::trim(::transcribe(ctx_wsp, params, pcmf32_cur, prompt_whisper, prob0, t_ms));
                 }
 
-                // // remove text between brackets using regex
-                // {
-                //     std::regex re("\\[.*?\\]");
-                //     text_heard = std::regex_replace(text_heard, re, "");
-                // }
+                // remove text between brackets using regex
+                {
+                    std::regex re("\\[.*?\\]");
+                    text_heard = std::regex_replace(text_heard, re, "");
+                }
 
-                // // remove text between brackets using regex
-                // {
-                //     std::regex re("\\(.*?\\)");
-                //     text_heard = std::regex_replace(text_heard, re, "");
-                // }
+                // remove text between brackets using regex
+                {
+                    std::regex re("\\(.*?\\)");
+                    text_heard = std::regex_replace(text_heard, re, "");
+                }
 
                 // // remove all characters, except for letters, numbers, punctuation and ':', '\'', '-', ' '
-                // text_heard = std::regex_replace(text_heard, std::regex("[^a-zA-Z0-9\\.,\\?!\\s\\:\\'\\-]"), "");
+                text_heard = std::regex_replace(text_heard, std::regex("[^a-zA-Z0-9\\.,\\?!\\s\\:\\'\\-]"), "");
 
                 // take first line
                 text_heard = text_heard.substr(0, text_heard.find_first_of('\n'));
@@ -780,7 +833,8 @@ int main(int argc, char ** argv) {
                 }
 
                 text_to_speak = ::replace(text_to_speak, "\"", "");
-                system((params.speak + " " + std::to_string(voice_id) + " \"" + text_to_speak + "\"").c_str());
+                sendTextAndGetAudio(text_to_speak);
+                //system((params.speak + " " + std::to_string(voice_id) + " \"" + text_to_speak + "\"").c_str());
 
                 audio.clear();
 
