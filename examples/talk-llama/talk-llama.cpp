@@ -5,7 +5,7 @@
 #include "common-sdl.h"
 #include "whisper.h"
 #include "llama.h"
-#include "rnnoise.h"
+//#include "rnnoise.h"
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
 #include <boost/process.hpp>
@@ -13,6 +13,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/thread.hpp>
 
 #include "ftxui/component/captured_mouse.hpp"  // for ftxui
 #include "ftxui/component/component.hpp"  // for Input, Renderer, ResizableSplitLeft
@@ -22,17 +23,17 @@
 #include "ftxui/component/loop.hpp"
 #include <ftxui/component/event.hpp> 
 
-
 #include <memory>
 
 using namespace ftxui;
 
 #include <sndfile.hh>
 #include <portaudio.h>
-#
-#include <sndfile.h>
-#include <iostream>
 
+#include <sndfile.h>
+
+#include <iostream>
+#include <cstdlib>
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -140,7 +141,10 @@ std::string sendTextAndGetAudio(const std::string& text) {
     }
 }
 
-
+void audioThread(const std::string& text_to_speak) {
+    std::string audio_file_uri = sendTextAndGetAudio(text_to_speak);
+    playAudio(audio_file_uri);
+}
 
 
 void start_python_server() {
@@ -442,6 +446,7 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
+std::string reset_position;
 std::string content_1;
 #define printf(...) Write(FormatToString(__VA_ARGS__))
 
@@ -485,22 +490,54 @@ int main(int argc, char ** argv) {
      // Initialize PortAudio
     Pa_Initialize();
 
+
     std::string content_2;
     auto textarea_1 = Input(&content_1);
     auto textarea_2 = Input(&content_2);
     int size = 50;
     auto layout = ResizableSplitLeft(textarea_1, textarea_2, &size);
-    
-    auto component = Renderer(layout, [&] {
-        return vbox({
-                text("Input:"),
-                separator(),
-                layout->Render() | flex,
-            }) |
-            border;
-    });
+   
+    // auto document = vbox({
+    //                     hbox({
+    //                         hflow(textarea_1),
+    //                         separator(),
+    //                         hflow(textarea_2),
+    //                     }),
+    //                 }) |
+    //                 border;
+ 
+    // document = vbox(filler(), document);
+
+    // auto component = Renderer(layout, [&] {
+    //     return vbox({
+    //             text("Input:"),
+    //             separator(),
+    //             layout->Render() | flex,
+    //         }) |
+    //         border;
+    // });
+  int custom_loop_count = 0;
+  int frame_count = 0;
+  int event_count = 0;
+    auto component = Renderer([&] {
+    frame_count++;
+    return vbox({
+               hflow(paragraph(content_1)),
+               separator(),
+               text("ftxui event count: " + std::to_string(event_count)),
+               text("ftxui frame count: " + std::to_string(frame_count)),
+               text("Custom loop count: " + std::to_string(custom_loop_count)),
+           }) |
+           border;
+  });
     
     auto screen = ScreenInteractive::Fullscreen();
+     component |= CatchEvent([&](Event) -> bool {
+    event_count++;
+    return true;
+  });
+    ///auto screen = Screen::Create(Dimension::Full());
+    //auto component = Renderer(screen, document);
     Loop loop(&screen, component);
     // screen.Loop(component);
 
@@ -509,7 +546,7 @@ int main(int argc, char ** argv) {
     std::atexit(shutdown_python_server);
 
     // Create RNNoise denoiser state
-    DenoiseState *denoiserState = rnnoise_create(NULL);
+    //DenoiseState *denoiserState = rnnoise_create(NULL);
 
     whisper_params params;
 
@@ -721,8 +758,16 @@ int main(int argc, char ** argv) {
         params.person + chat_symb,
     };
 
+    system("clear");
+
     // main loop
     while (is_running) {
+
+        if (!loop.HasQuitted()) {
+            custom_loop_count++;
+            loop.RunOnce();
+        }
+
         // handle Ctrl + C
         is_running = sdl_poll_events();
 
@@ -967,13 +1012,18 @@ int main(int argc, char ** argv) {
 
                 text_to_speak = ::replace(text_to_speak, "\"", "");
 
-                if (!loop.HasQuitted()) {
-                    loop.RunOnce();
-                }
+                // if (!loop.HasQuitted()) {
+                //      custom_loop_count++;
+                //     loop.RunOnce();
+                // }
 
-                audio_file_uri = sendTextAndGetAudio(text_to_speak);
-                //printf("playAudio %s.\n", audio_file_uri.c_str());
-                playAudio(audio_file_uri);
+
+                // audio_file_uri = sendTextAndGetAudio(text_to_speak);
+                // //printf("playAudio %s.\n", audio_file_uri.c_str());
+                // playAudio(audio_file_uri);
+
+                std::thread audio_thread(audioThread, text_to_speak);
+                audio_thread.join();
                 //system((params.speak + " " + std::to_string(voice_id) + " \"" + text_to_speak + "\"").c_str());
 
                 // int result = std::remove(audio_file_uri);
@@ -990,12 +1040,13 @@ int main(int argc, char ** argv) {
         }
 
         if (!loop.HasQuitted()) {
+             custom_loop_count++;
             loop.RunOnce();
         }
 
     }
 
-    rnnoise_destroy(denoiserState);
+    //rnnoise_destroy(denoiserState);
     audio.pause();
 
     whisper_print_timings(ctx_wsp);
