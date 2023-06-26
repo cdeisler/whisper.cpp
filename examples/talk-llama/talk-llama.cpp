@@ -72,17 +72,17 @@ void playAudio(const std::string &filePath) {
     std::vector<short> samples(sndfile.frames() * sndfile.channels());
     sndfile.read(samples.data(), sndfile.frames() * sndfile.channels());
 
-    Pa_Initialize();
+    //Pa_Initialize();
     PaStream *stream;
     Pa_OpenDefaultStream(&stream, 0, 1, paInt16, sndfile.samplerate(), 256, nullptr, nullptr);
     Pa_StartStream(stream);
     Pa_WriteStream(stream, samples.data(), samples.size());
     Pa_StopStream(stream);
     Pa_CloseStream(stream);
-    Pa_Terminate();
+    //Pa_Terminate();
 }
 
-void sendTextAndGetAudio(const std::string& text) {
+std::string sendTextAndGetAudio(const std::string& text) {
     try {
         // Create IO service and resolver
         net::io_context ioc;
@@ -124,24 +124,23 @@ void sendTextAndGetAudio(const std::string& text) {
         // Receive the HTTP response
         http::read(socket, buffer, res);
 
-        // Write the message to stdout (or handle it in any other way)
-        //std::cout << boost::beast::make_printable(res.body().data()) << std::endl;
-        // Save the audio data to a file
-        std::ofstream outFile("output1.wav", std::ios::binary);
-        std::vector<char> bodyData(boost::asio::buffer_size(res.body().data()));
-        boost::asio::buffer_copy(boost::asio::buffer(bodyData), res.body().data());
-        outFile.write(bodyData.data(), bodyData.size());
-        outFile.close();
         // Close the socket
         socket.shutdown(tcp::socket::shutdown_both);
 
-        // Play the audio file
-        playAudio("output1.wav");
+        // Extract the file path from the response body
+        std::string response_body = boost::beast::buffers_to_string(res.body().data());
+        std::string file_path = response_body;//.substr(1, response_body.size() - 2); // Remove the surrounding quotes
+
+        // Return the file path
+        return file_path;
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
+        return ""; // Return an empty string to indicate error
     }
 }
+
+
 
 
 void start_python_server() {
@@ -483,7 +482,9 @@ std::string FormatToString(const char* format, ...) {
 
 int main(int argc, char ** argv) {
 
-   
+     // Initialize PortAudio
+    Pa_Initialize();
+
     std::string content_2;
     auto textarea_1 = Input(&content_1);
     auto textarea_2 = Input(&content_2);
@@ -523,11 +524,9 @@ int main(int argc, char ** argv) {
     }
 
     // whisper init
-
     struct whisper_context * ctx_wsp = whisper_init_from_file(params.model_wsp.c_str());
 
     // llama init
-
     llama_init_backend();
 
     auto lparams = llama_context_default_params();
@@ -562,11 +561,10 @@ int main(int argc, char ** argv) {
     }
 
     // init audio
-
     audio_async audio(30*1000);
     if (!audio.init(params.capture_id, WHISPER_SAMPLE_RATE)) {
         fprintf(stderr, "%s: audio.init() failed!\n", __func__);
-        return 1;
+        return 1;   
     }
 
     audio.resume();
@@ -588,7 +586,7 @@ int main(int argc, char ** argv) {
     std::vector<float> pcm32_output(FRAME_SIZE);
     std::vector<float> denoisedBuffer(FRAME_SIZE);
 
-
+    std::string audio_file_uri;
     const std::string prompt_whisper = ::replace(k_prompt_whisper, "{1}", bot_name);
 
     // construct the initial prompt for LLaMA inference
@@ -808,10 +806,10 @@ int main(int argc, char ** argv) {
                 text_heard.insert(0, 1, ' ');
                 text_heard += "\n" + bot_name + chat_symb;
 
-                Write(text_heard);
+                //Write(text_heard);
 
-                // fprintf(stdout, "%s%s%s", "\033[1m", text_heard.c_str(), "\033[0m");
-                // fflush(stdout);
+                printf("%s%s%s", "\033", text_heard.c_str(), "\033");
+                fflush(stdout);
 
                 embd = ::llama_tokenize(ctx_llama, text_heard, false);
 
@@ -823,6 +821,7 @@ int main(int argc, char ** argv) {
                 // text inference
                 bool done = false;
                 std::string text_to_speak;
+
                 while (true) {
                     // predict
                     if (embd.size() > 0) {
@@ -967,8 +966,22 @@ int main(int argc, char ** argv) {
                 }
 
                 text_to_speak = ::replace(text_to_speak, "\"", "");
-                sendTextAndGetAudio(text_to_speak);
+
+                if (!loop.HasQuitted()) {
+                    loop.RunOnce();
+                }
+
+                audio_file_uri = sendTextAndGetAudio(text_to_speak);
+                //printf("playAudio %s.\n", audio_file_uri.c_str());
+                playAudio(audio_file_uri);
                 //system((params.speak + " " + std::to_string(voice_id) + " \"" + text_to_speak + "\"").c_str());
+
+                // int result = std::remove(audio_file_uri);
+                // if (result == 0) {
+                //     printf("File deleted successfully.\n");
+                // } else {
+                //     perror("Error deleting the file");
+                // }
 
                 audio.clear();
 
@@ -990,6 +1003,9 @@ int main(int argc, char ** argv) {
 
     llama_print_timings(ctx_llama);
     llama_free(ctx_llama);
+
+    // Terminate PortAudio
+    Pa_Terminate();
 
     return 0;
 }
