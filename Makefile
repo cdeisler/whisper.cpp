@@ -35,7 +35,7 @@ endif
 #
 
 CFLAGS   = -I.              -O3 -DNDEBUG -std=c11   -fPIC
-CXXFLAGS = -I. -I./examples -O3 -DNDEBUG -std=c++11 -fPIC
+CXXFLAGS = -I. -I./examples -O3 -DNDEBUG -std=c++17 -fPIC
 LDFLAGS  =
 
 # ref: https://github.com/ggerganov/whisper.cpp/issues/37
@@ -162,9 +162,9 @@ ifdef WHISPER_OPENBLAS
 endif
 
 ifdef WHISPER_CUBLAS
-	CFLAGS      += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include 
-	CXXFLAGS    += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include -I$(BOOST_ROOT)
-	LDFLAGS     += -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -lrnnoise -lsndfile -lportaudio -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L/usr/local/lib -L$(BOOST_ROOT)/libs -L$(CUDA_PATH)/targets/x86_64-linux/lib
+	CFLAGS      += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include
+	CXXFLAGS    += -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include -I/usr/local/include -I$(BOOST_ROOT) -I/home/chuckd/FTXUI/include 
+	LDFLAGS     += -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -lrnnoise -lsndfile -lportaudio -lftxui-component -lftxui-dom -lftxui-screen -L/home/chuckd/FTXUI/build -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L/usr/local/lib -L$(BOOST_ROOT)/libs -L$(CUDA_PATH)/targets/x86_64-linux/lib
 	WHISPER_OBJ += ggml-cuda.o
 	NVCC        = nvcc
 	NVCCFLAGS   = --forward-unknown-to-host-compiler -arch=all

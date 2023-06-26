@@ -13,6 +13,20 @@
 #include <boost/beast/http.hpp>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
+
+#include "ftxui/component/captured_mouse.hpp"  // for ftxui
+#include "ftxui/component/component.hpp"  // for Input, Renderer, ResizableSplitLeft
+#include "ftxui/component/component_base.hpp"  // for ComponentBase, Component
+#include "ftxui/component/screen_interactive.hpp"  // for ScreenInteractive
+#include "ftxui/dom/elements.hpp"  // for operator|, separator, text, Element, flex, vbox, border
+#include "ftxui/component/loop.hpp"
+#include <ftxui/component/event.hpp> 
+
+
+#include <memory>
+
+using namespace ftxui;
+
 #include <sndfile.hh>
 #include <portaudio.h>
 #
@@ -429,8 +443,65 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
+std::string content_1;
+#define printf(...) Write(FormatToString(__VA_ARGS__))
+
+void Write(const std::string& new_data) {
+  content_1 += new_data;
+}
+
+std::string FormatToString(const char* format, ...) {
+    va_list args;
+    
+    // Start variadic argument processing
+    va_start(args, format);
+    
+    // Find out the length of the formatted string
+    va_list tempArgs;
+    va_copy(tempArgs, args);
+    int len = std::vsnprintf(nullptr, 0, format, tempArgs);
+    va_end(tempArgs);
+    
+    if (len <= 0) {
+        // Formatting error
+        va_end(args);
+        return "";
+    }
+    
+    // Allocate a buffer of the required size
+    std::vector<char> buffer(len + 1); // +1 for the null-terminator
+    
+    // Write the formatted string to the buffer
+    std::vsnprintf(buffer.data(), buffer.size(), format, args);
+    
+    // End variadic argument processing
+    va_end(args);
+    
+    // Convert to std::string
+    return std::string(buffer.data());
+}
 
 int main(int argc, char ** argv) {
+
+   
+    std::string content_2;
+    auto textarea_1 = Input(&content_1);
+    auto textarea_2 = Input(&content_2);
+    int size = 50;
+    auto layout = ResizableSplitLeft(textarea_1, textarea_2, &size);
+    
+    auto component = Renderer(layout, [&] {
+        return vbox({
+                text("Input:"),
+                separator(),
+                layout->Render() | flex,
+            }) |
+            border;
+    });
+    
+    auto screen = ScreenInteractive::Fullscreen();
+    Loop loop(&screen, component);
+    // screen.Loop(component);
 
     std::thread serverThread(start_python_server);
     serverThread.detach();
@@ -729,7 +800,6 @@ int main(int argc, char ** argv) {
                 if (text_heard.empty() || tokens.empty() || force_speak) {
                     //fprintf(stdout, "%s: Heard nothing, skipping ...\n", __func__);
                     audio.clear();
-
                     continue;
                 }
 
@@ -737,8 +807,11 @@ int main(int argc, char ** argv) {
 
                 text_heard.insert(0, 1, ' ');
                 text_heard += "\n" + bot_name + chat_symb;
-                fprintf(stdout, "%s%s%s", "\033[1m", text_heard.c_str(), "\033[0m");
-                fflush(stdout);
+
+                Write(text_heard);
+
+                // fprintf(stdout, "%s%s%s", "\033[1m", text_heard.c_str(), "\033[0m");
+                // fflush(stdout);
 
                 embd = ::llama_tokenize(ctx_llama, text_heard, false);
 
@@ -755,7 +828,6 @@ int main(int argc, char ** argv) {
                     if (embd.size() > 0) {
                         if (n_past + (int) embd.size() > n_ctx) {
                             n_past = n_keep;
-
                             // insert n_left/2 tokens at the start of embd from last_n_tokens
                             embd.insert(embd.begin(), embd_inp.begin() + embd_inp.size() - n_prev, embd_inp.end());
                             // stop saving session if we run out of context
@@ -802,7 +874,6 @@ int main(int argc, char ** argv) {
                             return 1;
                         }
                     }
-
 
                     embd_inp.insert(embd_inp.end(), embd.begin(), embd.end());
                     n_past += embd.size();
@@ -865,9 +936,7 @@ int main(int argc, char ** argv) {
                         if (id != llama_token_eos()) {
                             // add it to the context
                             embd.push_back(id);
-
                             text_to_speak += llama_token_to_str(ctx_llama, id);
-
                             printf("%s", llama_token_to_str(ctx_llama, id));
                         }
                     }
@@ -906,6 +975,11 @@ int main(int argc, char ** argv) {
                 ++n_iter;
             }
         }
+
+        if (!loop.HasQuitted()) {
+            loop.RunOnce();
+        }
+
     }
 
     rnnoise_destroy(denoiserState);
