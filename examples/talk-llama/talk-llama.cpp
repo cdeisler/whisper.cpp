@@ -446,6 +446,8 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
+
+std::string text_heard;
 std::string reset_position;
 std::string content_1;
 #define printf(...) Write(FormatToString(__VA_ARGS__))
@@ -495,47 +497,39 @@ int main(int argc, char ** argv) {
     auto textarea_1 = Input(&content_1);
     auto textarea_2 = Input(&content_2);
     int size = 50;
-    auto layout = ResizableSplitLeft(textarea_1, textarea_2, &size);
+
+    int custom_loop_count = 0;
+    int frame_count = 0;
+    int event_count = 0;
+
+    auto componentVars = Renderer([&] {
+        return vbox({
+                text("ftxui event count: " + std::to_string(event_count)),
+                text("ftxui frame count: " + std::to_string(frame_count)),
+                text("Custom loop count: " + std::to_string(custom_loop_count)),
+            }) |
+            border;
+  });
+
+    auto layout = ResizableSplitLeft(textarea_1, componentVars, &size);
    
-    // auto document = vbox({
-    //                     hbox({
-    //                         hflow(textarea_1),
-    //                         separator(),
-    //                         hflow(textarea_2),
-    //                     }),
-    //                 }) |
-    //                 border;
  
     // document = vbox(filler(), document);
-
-    // auto component = Renderer(layout, [&] {
-    //     return vbox({
-    //             text("Input:"),
-    //             separator(),
-    //             layout->Render() | flex,
-    //         }) |
-    //         border;
-    // });
-  int custom_loop_count = 0;
-  int frame_count = 0;
-  int event_count = 0;
-    auto component = Renderer([&] {
-    frame_count++;
+  auto component = Renderer(layout, [&] {
     return vbox({
-               hflow(paragraph(content_1)),
+               text("Input:" + text_heard),
                separator(),
-               text("ftxui event count: " + std::to_string(event_count)),
-               text("ftxui frame count: " + std::to_string(frame_count)),
-               text("Custom loop count: " + std::to_string(custom_loop_count)),
+               layout->Render() | flex,
            }) |
            border;
   });
+ 
     
     auto screen = ScreenInteractive::Fullscreen();
-     component |= CatchEvent([&](Event) -> bool {
-    event_count++;
-    return true;
-  });
+//      component |= CatchEvent([&](Event) -> bool {
+//     event_count++;
+//     return true;
+//   });
     ///auto screen = Screen::Create(Dimension::Full());
     //auto component = Renderer(screen, document);
     Loop loop(&screen, component);
@@ -810,8 +804,7 @@ int main(int argc, char ** argv) {
                 // }
                 // printf("\n");
 
-                std::string text_heard;
-
+  
                 if (!force_speak) {
                     text_heard = ::trim(::transcribe(ctx_wsp, params, pcmf32_cur, prompt_whisper, prob0, t_ms));
                 }

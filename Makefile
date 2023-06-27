@@ -167,7 +167,7 @@ ifdef WHISPER_CUBLAS
 	LDFLAGS     += -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -lrnnoise -lsndfile -lportaudio -lftxui-component -lftxui-dom -lftxui-screen -L/home/chuckd/FTXUI/build -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L/usr/local/lib -L$(BOOST_ROOT)/libs -L$(CUDA_PATH)/targets/x86_64-linux/lib
 	WHISPER_OBJ += ggml-cuda.o
 	NVCC        = nvcc
-	NVCCFLAGS   = --forward-unknown-to-host-compiler -arch=all
+	NVCCFLAGS   = --forward-unknown-to-host-compiler -arch=compute_86
 
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h
 	$(NVCC) $(NVCCFLAGS) $(CXXFLAGS) -Wno-pedantic -c $< -o $@
