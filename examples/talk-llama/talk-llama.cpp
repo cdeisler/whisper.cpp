@@ -446,7 +446,7 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
-
+bool isVadSimple = false;
 std::string text_heard;
 std::string reset_position;
 std::string content_1;
@@ -507,6 +507,7 @@ int main(int argc, char ** argv) {
                 text("ftxui event count: " + std::to_string(event_count)),
                 text("ftxui frame count: " + std::to_string(frame_count)),
                 text("Custom loop count: " + std::to_string(custom_loop_count)),
+                text("isVadSimple: " + std::to_string(isVadSimple)),
             }) |
             border;
   });
@@ -759,6 +760,7 @@ int main(int argc, char ** argv) {
 
         if (!loop.HasQuitted()) {
             custom_loop_count++;
+            screen.PostEvent(Event::Custom);
             loop.RunOnce();
         }
 
@@ -777,11 +779,12 @@ int main(int argc, char ** argv) {
         {
             audio.get(2000, pcmf32_cur);
 
-            if (::vad_simple(pcmf32_cur, WHISPER_SAMPLE_RATE, 1250, params.vad_thold, params.freq_thold, params.print_energy) || force_speak) {
+            isVadSimple = ::vad_simple(pcmf32_cur, WHISPER_SAMPLE_RATE, 1250, params.vad_thold, params.freq_thold, params.print_energy);
+
+            if (isVadSimple || force_speak) {
                 //fprintf(stdout, "%s: Speech detected! Processing ...\n", __func__);
 
                 audio.get(params.voice_ms, pcmf32_cur);
-
 
                 //saveAsWav(pcmf32_cur, "output-before.wav");
 
@@ -848,6 +851,12 @@ int main(int argc, char ** argv) {
 
                 printf("%s%s%s", "\033", text_heard.c_str(), "\033");
                 fflush(stdout);
+
+                if (!loop.HasQuitted()) {
+                    custom_loop_count++;
+                    screen.PostEvent(Event::Custom);
+                    loop.RunOnce();
+                }
 
                 embd = ::llama_tokenize(ctx_llama, text_heard, false);
 
@@ -1034,6 +1043,7 @@ int main(int argc, char ** argv) {
 
         if (!loop.HasQuitted()) {
              custom_loop_count++;
+             screen.PostEvent(Event::Custom);
             loop.RunOnce();
         }
 
