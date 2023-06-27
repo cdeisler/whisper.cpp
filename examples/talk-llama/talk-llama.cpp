@@ -21,7 +21,9 @@
 #include "ftxui/component/screen_interactive.hpp"  // for ScreenInteractive
 #include "ftxui/dom/elements.hpp"  // for operator|, separator, text, Element, flex, vbox, border
 #include "ftxui/component/loop.hpp"
-#include <ftxui/component/event.hpp> 
+#include <ftxui/component/event.hpp>
+
+#include "FtxuiUI.cpp"
 
 #include <memory>
 
@@ -449,11 +451,14 @@ The transcript only includes text, it does not include markup like HTML and Mark
 bool isVadSimple = false;
 std::string text_heard;
 std::string reset_position;
-std::string content_1;
+
+FtxuiUI ftxuiUI;
+
 #define printf(...) Write(FormatToString(__VA_ARGS__))
 
 void Write(const std::string& new_data) {
-  content_1 += new_data;
+  //content_1 += new_data;
+  ftxuiUI.Write(new_data);
 }
 
 std::string FormatToString(const char* format, ...) {
@@ -492,56 +497,10 @@ int main(int argc, char ** argv) {
      // Initialize PortAudio
     Pa_Initialize();
 
-
-    std::string content_2;
-    auto textarea_1 = Input(&content_1);
-    auto textarea_2 = Input(&content_2);
-    int size = 50;
-
-    int custom_loop_count = 0;
-    int frame_count = 0;
-    int event_count = 0;
-
-    auto componentVars = Renderer([&] {
-        return vbox({
-                text("ftxui event count: " + std::to_string(event_count)),
-                text("ftxui frame count: " + std::to_string(frame_count)),
-                text("Custom loop count: " + std::to_string(custom_loop_count)),
-                text("isVadSimple: " + std::to_string(isVadSimple)),
-            }) |
-            border;
-  });
-
-    auto layout = ResizableSplitLeft(textarea_1, componentVars, &size);
-   
- 
-    // document = vbox(filler(), document);
-  auto component = Renderer(layout, [&] {
-    return vbox({
-               text("Input:" + text_heard),
-               separator(),
-               layout->Render() | flex,
-           }) |
-           border;
-  });
- 
     
-    auto screen = ScreenInteractive::Fullscreen();
-//      component |= CatchEvent([&](Event) -> bool {
-//     event_count++;
-//     return true;
-//   });
-    ///auto screen = Screen::Create(Dimension::Full());
-    //auto component = Renderer(screen, document);
-    Loop loop(&screen, component);
-    // screen.Loop(component);
-
     std::thread serverThread(start_python_server);
     serverThread.detach();
     std::atexit(shutdown_python_server);
-
-    // Create RNNoise denoiser state
-    //DenoiseState *denoiserState = rnnoise_create(NULL);
 
     whisper_params params;
 
@@ -758,11 +717,7 @@ int main(int argc, char ** argv) {
     // main loop
     while (is_running) {
 
-        if (!loop.HasQuitted()) {
-            custom_loop_count++;
-            screen.PostEvent(Event::Custom);
-            loop.RunOnce();
-        }
+        ftxuiUI.Refresh();
 
         // handle Ctrl + C
         is_running = sdl_poll_events();
@@ -786,28 +741,6 @@ int main(int argc, char ** argv) {
 
                 audio.get(params.voice_ms, pcmf32_cur);
 
-                //saveAsWav(pcmf32_cur, "output-before.wav");
-
-                // Convert float samples to 16-bit PCM, then to float representation between -1 and 1
-                // for (size_t i = 0; i < FRAME_SIZE; i++) {
-                //     short pcm16 = static_cast<short>(pcmf32_cur[i] * 32767.0f);
-                //     pcm32_input[i] = static_cast<float>(pcm16) / 32767.0f;
-                // }
-
-                // Process with RNNoise (assuming denoiserState is already created)
-                //rnnoise_process_frame(denoiserState, pcm32_output.data(), pcm32_input.data());
-
-                //saveAsWav(pcm32_output, "output-denoised.wav");
-
-                //std::vector<float> denoisedVector(denoisedBuffer, denoisedBuffer + 480);
-
-                // Print the size of denoisedVector
-                // for (float value : denoisedVector) {
-                //     printf("%f ", value);
-                // }
-                // printf("\n");
-
-  
                 if (!force_speak) {
                     text_heard = ::trim(::transcribe(ctx_wsp, params, pcmf32_cur, prompt_whisper, prob0, t_ms));
                 }
@@ -852,11 +785,7 @@ int main(int argc, char ** argv) {
                 printf("%s%s%s", "\033", text_heard.c_str(), "\033");
                 fflush(stdout);
 
-                if (!loop.HasQuitted()) {
-                    custom_loop_count++;
-                    screen.PostEvent(Event::Custom);
-                    loop.RunOnce();
-                }
+                ftxuiUI.Refresh();
 
                 embd = ::llama_tokenize(ctx_llama, text_heard, false);
 
@@ -1014,38 +943,17 @@ int main(int argc, char ** argv) {
 
                 text_to_speak = ::replace(text_to_speak, "\"", "");
 
-                // if (!loop.HasQuitted()) {
-                //      custom_loop_count++;
-                //     loop.RunOnce();
-                // }
-
-
-                // audio_file_uri = sendTextAndGetAudio(text_to_speak);
-                // //printf("playAudio %s.\n", audio_file_uri.c_str());
-                // playAudio(audio_file_uri);
+                //ftxuiUI.Refresh();
 
                 std::thread audio_thread(audioThread, text_to_speak);
                 audio_thread.join();
-                //system((params.speak + " " + std::to_string(voice_id) + " \"" + text_to_speak + "\"").c_str());
-
-                // int result = std::remove(audio_file_uri);
-                // if (result == 0) {
-                //     printf("File deleted successfully.\n");
-                // } else {
-                //     perror("Error deleting the file");
-                // }
-
                 audio.clear();
 
                 ++n_iter;
             }
         }
 
-        if (!loop.HasQuitted()) {
-             custom_loop_count++;
-             screen.PostEvent(Event::Custom);
-            loop.RunOnce();
-        }
+        //ftxuiUI.Refresh();
 
     }
 
