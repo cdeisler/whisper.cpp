@@ -509,6 +509,14 @@ int main(int argc, char ** argv) {
     Pa_Initialize();
 
     Loop loop(&screen, component());
+    auto customLoop = [&]() {
+        if (!loop.HasQuitted()) {
+            custom_loop_count++;
+            screen.PostEvent(Event::Custom);
+            loop.RunOnce();
+        }
+    };
+
 
     std::thread serverThread(start_python_server);
     serverThread.detach();
@@ -730,11 +738,7 @@ int main(int argc, char ** argv) {
     while (is_running) {
 
         //ftxuiUI.Refresh();
-        if (!loop.HasQuitted()) {
-            custom_loop_count++;
-            screen.PostEvent(Event::Custom);
-            loop.RunOnce();
-        }
+        customLoop();
 
         // handle Ctrl + C
         is_running = sdl_poll_events();
@@ -755,6 +759,8 @@ int main(int argc, char ** argv) {
 
             if (isVadSimple || force_speak) {
                 //fprintf(stdout, "%s: Speech detected! Processing ...\n", __func__);
+
+                customLoop();
 
                 audio.get(params.voice_ms, pcmf32_cur);
 
@@ -960,7 +966,7 @@ int main(int argc, char ** argv) {
 
                 text_to_speak = ::replace(text_to_speak, "\"", "");
 
-                //ftxuiUI.Refresh();
+                customLoop();
 
                 std::thread audio_thread(audioThread, text_to_speak);
                 audio_thread.join();
@@ -970,7 +976,7 @@ int main(int argc, char ** argv) {
             }
         }
 
-        //ftxuiUI.Refresh();
+        customLoop();
 
     }
 
