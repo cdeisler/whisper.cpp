@@ -23,7 +23,7 @@
 #include "ftxui/component/loop.hpp"
 #include <ftxui/component/event.hpp>
 
-#include "FtxuiUI.cpp"
+#include "FtxUI.h"
 
 #include <memory>
 
@@ -53,6 +53,7 @@ using tcp = net::ip::tcp;
 #define FRAME_SIZE 480
 
 bp::child childProcess; 
+//FtxuiUI ftxuiUI;
 
 std::string url_encode(const std::string &value) {
     static auto hex_chars = "0123456789ABCDEF";
@@ -448,17 +449,24 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
-bool isVadSimple = false;
-std::string text_heard;
+//bool isVadSimple = false;
+//std::string text_heard;
 std::string reset_position;
 
-FtxuiUI ftxuiUI;
+// Function to handle the SIGINT signal (Ctrl+C)
+void handleSignal(int signal) {
+    if (signal == SIGINT) {
+        std::cout << "\nCtrl+C pressed. Exiting the application.\n";
+        std::exit(0);  // Exit the application
+    }
+}
 
 #define printf(...) Write(FormatToString(__VA_ARGS__))
 
 void Write(const std::string& new_data) {
-  //content_1 += new_data;
-  ftxuiUI.Write(new_data);
+  content_1 += new_data;
+  //ftxuiUI.Write(new_data);
+
 }
 
 std::string FormatToString(const char* format, ...) {
@@ -494,10 +502,14 @@ std::string FormatToString(const char* format, ...) {
 
 int main(int argc, char ** argv) {
 
+    // Register the SIGINT handler
+    std::signal(SIGINT, handleSignal);
+
      // Initialize PortAudio
     Pa_Initialize();
 
-    
+    Loop loop(&screen, component());
+
     std::thread serverThread(start_python_server);
     serverThread.detach();
     std::atexit(shutdown_python_server);
@@ -692,7 +704,7 @@ int main(int argc, char ** argv) {
     printf("\n");
     printf("%s%s", params.person.c_str(), chat_symb.c_str());
     fflush(stdout);
-
+    
     // clear audio buffer
     audio.clear();
 
@@ -717,7 +729,12 @@ int main(int argc, char ** argv) {
     // main loop
     while (is_running) {
 
-        ftxuiUI.Refresh();
+        //ftxuiUI.Refresh();
+        if (!loop.HasQuitted()) {
+            custom_loop_count++;
+            screen.PostEvent(Event::Custom);
+            loop.RunOnce();
+        }
 
         // handle Ctrl + C
         is_running = sdl_poll_events();
@@ -785,7 +802,7 @@ int main(int argc, char ** argv) {
                 printf("%s%s%s", "\033", text_heard.c_str(), "\033");
                 fflush(stdout);
 
-                ftxuiUI.Refresh();
+                //ftxuiUI.Refresh();
 
                 embd = ::llama_tokenize(ctx_llama, text_heard, false);
 
